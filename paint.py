@@ -9,6 +9,7 @@ from collections import deque
 import numpy as np
 import SimpleITK as sitk
 
+from net import Network
 
 class Subject(object):
     def __init__(self, file):
@@ -16,12 +17,13 @@ class Subject(object):
         self.segm_file = self.file[:-4] + '_segm.vtk'
         self.sitk_img = sitk.ReadImage(file)
         self.img = sitk.GetArrayFromImage(self.sitk_img)
+        self.img = self.img / np.max(self.img)
         
         if os.path.isfile(self.segm_file):
             img = sitk.ReadImage(self.segm_file)
             self.segm = sitk.GetArrayFromImage(img)
         else:
-            self.segm = np.zeros(self.img.shape, dtype=np.uint8)
+            self.segm = None
 
     def save(self):
         img = sitk.GetImageFromArray(self.segm)
@@ -32,6 +34,9 @@ class Subject(object):
 class SubjectView(object):
     def __init__(self, subject):
         self.subject = subject
+        self.initialize()
+
+    def initialize(self):
         self.slices = []
         self.segms = []
         
@@ -46,6 +51,7 @@ class SubjectView(object):
 
             qi = QImage(segm[z].astype(np.uint8), shape[2], shape[1], shape[2], QImage.Format_Alpha8)
             self.segms.append(qi)
+        
 
     def save(self):
         """ Write changes (in QImage) to numpy array """
@@ -63,6 +69,12 @@ class SubjectView(object):
 
                 self.subject.segm[z,y] = np.array(b)
         self.subject.save()
+
+    def clear(self):
+        """ Clears the segmentation completely """
+
+        self.subject.segm = np.zeros(self.subject.segm.shape, dtype=np.uint8)
+        self.initialize()
 
 
 
@@ -93,8 +105,10 @@ class App(QWidget):
 
     def __init__(self, files):
         super().__init__()
+        self.network = Network()
         self.loader = DataLoader(files)
         self.subject_view = None
+        self.num_trained = 0
 
         self.draw_mode = App.DRAW_NONE
         self.setGeometry(100, 100, 500, 500)
@@ -103,17 +117,47 @@ class App(QWidget):
         self.next()
 
     def next(self):
-        if self.subject_view:
-            self.subject_view.save()
+        self.save()
         
         subject = self.loader.next()
         if not subject:
             return
-        
+
+        if subject.segm is None:
+            if self.num_trained < 1:
+                subject.segm = np.zeros(subject.img.shape, dtype=np.uint8)
+            else:
+                subject.segm = (255*self.network.predict(subject.img)).astype(np.uint8)
+
         self.subject_view = SubjectView(subject)
         self.slice_index = len(self.subject_view.slices)//2
 
         self.update()
+
+    def save(self):
+        if not self.subject_view:
+            return
+
+        self.subject_view.save()
+
+        subject = self.subject_view.subject
+
+        amax = np.max(subject.segm.reshape(subject.segm.shape[0], -1), axis=1)
+        ids = np.where(amax > 0)[0]
+        if len(ids) == 0:
+            return # No segmentation
+
+        zrange = (ids[0], ids[-1]+1)
+        self.network.fit(subject.img, (subject.segm==255).astype(np.uint8), zrange)
+        self.num_trained += 1
+
+    def clear(self):
+        if not self.subject_view:
+            return
+
+        self.subject_view.clear()
+        self.update()
+
 
     def paintEvent(self, event):
         if not self.subject_view:
@@ -196,10 +240,11 @@ class App(QWidget):
         if key == Qt.Key_Escape:
             self.app.quit()
         elif key == Qt.Key_S:
-            if self.subject_view:
-                self.subject_view.save()
+            self.save()
         elif key == Qt.Key_N:
             self.next()
+        elif key == Qt.Key_C:
+            self.clear()
 
 
 
