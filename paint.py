@@ -18,6 +18,7 @@ class Subject(object):
         self.sitk_img = sitk.ReadImage(file)
         self.img = sitk.GetArrayFromImage(self.sitk_img)
         self.img = self.img / np.max(self.img)
+        self.img = self.img[self.img.shape[0]//2:self.img.shape[0]//2+1]
         
         if os.path.isfile(self.segm_file):
             img = sitk.ReadImage(self.segm_file)
@@ -26,9 +27,10 @@ class Subject(object):
             self.segm = None
 
     def save(self):
-        img = sitk.GetImageFromArray(self.segm)
-        img.CopyInformation(self.sitk_img)
-        sitk.WriteImage(img, self.segm_file)
+        pass
+        #img = sitk.GetImageFromArray(self.segm)
+        #img.CopyInformation(self.sitk_img)
+        #sitk.WriteImage(img, self.segm_file)
 
 
 class SubjectView(object):
@@ -109,7 +111,7 @@ class App(QWidget):
         self.loader = DataLoader(files)
         self.subject_view = None
         self.num_trained = 0
-
+        self.previous = []
         self.draw_mode = App.DRAW_NONE
         self.setGeometry(100, 100, 500, 500)
         self.path = None
@@ -148,7 +150,20 @@ class App(QWidget):
             return # No segmentation
 
         zrange = (ids[0], ids[-1]+1)
-        self.network.fit(subject.img, (subject.segm==255).astype(np.uint8), zrange)
+
+        self.previous.append((
+            subject.img, subject.segm, zrange
+        ))
+
+        imgs = []
+        segms = []
+
+        for p in self.previous[-5:]:
+            for z in range(p[2][0], p[2][1]):
+                imgs.append(p[0][z:z+1].astype(np.float32))
+                segms.append((p[1][z:z+1] == 255).astype(np.long))
+
+        self.network.fit(imgs, segms)
         self.num_trained += 1
 
     def clear(self):

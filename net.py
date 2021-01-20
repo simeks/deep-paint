@@ -57,7 +57,7 @@ class UNet(nn.Module):
         self.pool3 = nn.MaxPool2d(2, 2)
         self.pool4 = nn.MaxPool2d(2, 2)
 
-        M = 64
+        M = 32
 
         self.conv_block1_64 = UNetConvBlock(channel_count, M)
         self.conv_block64_128 = UNetConvBlock(M, M*2)
@@ -108,27 +108,29 @@ torch.backends.cudnn.benchmark = True
 class Network(object):
     def __init__(self):
         self.model = UNet(1, 2).cuda()
-        self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
         self.loss_fn = torch.nn.CrossEntropyLoss()
 
-    def fit(self, img, segm, zrange):
+    def fit(self, img, segm):
         self.model.train()
 
-        t_img = torch.from_numpy(img.astype(np.float32)).unsqueeze(0).cuda()
-        t_segm = torch.from_numpy(segm.astype(np.long)).unsqueeze(0).cuda()
+        weights = [x / len(img) for x in range(len(img))]
+        for e in range(10):
+            ids = np.arange(0, len(img))
 
-        ids = np.arange(zrange[0], zrange[1])
-
-        for e in range(20):
             losses = []
-            for z in np.random.permutation(ids):
-                pred = self.model(t_img[:,z:z+1])
-                loss = self.loss_fn(pred, t_segm[0,z:z+1].long())
+            for i in np.random.permutation(ids):
+                t_img = torch.from_numpy(img[i].astype(np.float32)).unsqueeze(0).cuda()
+                t_segm = torch.from_numpy(segm[i].astype(np.long)).unsqueeze(0).cuda()
+
+                pred = self.model(t_img)
+                loss = weights[i] * self.loss_fn(pred, t_segm[0].long())
                 losses.append(loss.item())
 
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+
             print(e, np.mean(losses))
 
     def predict(self, img):
